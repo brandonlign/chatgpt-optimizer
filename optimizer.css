@@ -1,11 +1,37 @@
-/* Prevent conversation turns from painting while the bounded loader counts them. */
+/* Hide conversation turns while the bounded loader counts the completed chat. */
 html.cgo-preparing-long-chat [data-testid^="conversation-turn-"] {
   display: none !important;
 }
 
-/* Old turns remain in ChatGPT's DOM but do not participate in layout or paint. */
+/* Old turns stay in ChatGPT's data model but do not use layout or paint work. */
 .cgo-hidden-turn {
   display: none !important;
+}
+
+/* Remove visual effects that add compositing work. */
+html.cgo-max-performance,
+html.cgo-max-performance * {
+  scroll-behavior: auto !important;
+}
+
+html.cgo-max-performance [class*="backdrop-blur"] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html.cgo-max-performance main [class*="shadow-"] {
+  box-shadow: none !important;
+}
+
+html.cgo-max-performance main [class*="transition-"] {
+  transition-duration: 0.001ms !important;
+  transition-delay: 0ms !important;
+}
+
+html.cgo-max-performance main [class*="animate-"]:not([class*="animate-spin"]) {
+  animation-duration: 0.001ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
 }
 
 #cgo-long-chat-status {
@@ -15,6 +41,7 @@ html.cgo-preparing-long-chat [data-testid^="conversation-turn-"] {
   z-index: 2147483647;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   max-width: calc(100vw - 24px);
   padding: 7px 9px;
@@ -22,7 +49,6 @@ html.cgo-preparing-long-chat [data-testid^="conversation-turn-"] {
   border-radius: 10px;
   background: rgba(20, 20, 20, 0.94);
   color: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.28);
   font: 600 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
