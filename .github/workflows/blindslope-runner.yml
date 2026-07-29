@@ -3,6 +3,9 @@ name: BlindSlope network runner
 on:
   push:
     branches: [pilot/blindslope-runner]
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/blindslope-runner.yml]
   workflow_dispatch:
 
 permissions:
@@ -78,7 +81,6 @@ jobs:
           with (OUT/'l_band_granules.csv').open('w',newline='') as f:
               w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerows(rows)
 
-          # Real unauthenticated S-band catalogue probe. A 401/403 is recorded as an access result, not no coverage.
           s_payload=json.dumps({'collections':['NISAR_SSAR_GUNW'],'bbox':[88.55,27.25,88.72,27.40],
                                 'datetime':'2026-07-08T00:00:00Z/2026-07-30T00:00:00Z','limit':500}).encode()
           sstatus,surl,sheaders,sbody=request('https://bhoonidhi-api.nrsc.gov.in/data/search',s_payload,{'Content-Type':'application/json'})
