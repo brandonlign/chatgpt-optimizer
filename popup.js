@@ -1,13 +1,15 @@
 const defaults = {
-  reduceBlur: true,
-  optimizeSidebar: true,
+  reduceBlur: false,
   reduceAnimations: false,
   reduceShadows: false
 };
 
 const ids = Object.keys(defaults);
 const status = document.getElementById("status");
+const version = document.getElementById("version");
 let statusTimer;
+
+version.textContent = `v${chrome.runtime.getManifest().version}`;
 
 async function loadSettings() {
   const settings = await chrome.storage.local.get(defaults);
