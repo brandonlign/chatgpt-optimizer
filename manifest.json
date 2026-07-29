@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Optimizer",
+  "version": "1.2.0",
+  "description": "Lightweight local performance tweaks for long ChatGPT conversations.",
+  "permissions": ["storage"],
+  "action": {
+    "default_title": "ChatGPT Optimizer",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "css": ["optimizer.css"],
+      "js": ["optimizer.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
