@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Optimizer",
-  "version": "1.4.0",
-  "description": "Loads long ChatGPT conversations with only the newest turns visible.",
+  "version": "1.5.0",
+  "description": "Keeps only the newest 10 turns visible in long ChatGPT conversations.",
   "action": {
     "default_title": "ChatGPT Optimizer",
     "default_popup": "popup.html"
