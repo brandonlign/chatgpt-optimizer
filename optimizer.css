@@ -1,0 +1,41 @@
+/*
+ * Core optimization: let Chrome skip layout and paint work for conversation
+ * turns that are far outside the viewport. This applies automatically to new
+ * turns, so no MutationObserver or repeated DOM scan is needed.
+ */
+[data-testid^="conversation-turn-"] {
+  content-visibility: auto !important;
+  contain-intrinsic-size: auto 640px;
+}
+
+/* Avoid animated page jumps in long chats. */
+html {
+  scroll-behavior: auto !important;
+}
+
+/* Optional sidebar optimization. */
+html.cgo-sidebar nav a[href^="/c/"] {
+  content-visibility: auto !important;
+  contain-intrinsic-size: auto 48px;
+}
+
+/* Enabled by default: blur is relatively expensive on large composited pages. */
+html.cgo-no-blur [class*="backdrop-blur"] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Optional aggressive modes. These are off by default. */
+html.cgo-reduce-motion main [class*="transition-"] {
+  transition-duration: 0.001ms !important;
+  transition-delay: 0ms !important;
+}
+
+html.cgo-reduce-motion main [class*="animate-"]:not([class*="animate-spin"]) {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+html.cgo-no-shadows main [class*="shadow-"] {
+  box-shadow: none !important;
+}
