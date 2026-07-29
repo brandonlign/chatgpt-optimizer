@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  const version = chrome.runtime.getManifest().version;
+  const migrationKey = "safeModeVersion";
   const defaults = {
     reduceBlur: false,
     reduceAnimations: false,
@@ -21,7 +23,7 @@
     dot.className = "cgo-indicator-dot";
 
     const label = document.createElement("span");
-    label.textContent = `Optimizer v${chrome.runtime.getManifest().version}`;
+    label.textContent = `Optimizer v${version}`;
 
     indicator.append(dot, label);
     document.body.appendChild(indicator);
@@ -35,8 +37,21 @@
 
   async function refreshSettings() {
     try {
-      const settings = await chrome.storage.local.get(defaults);
-      applySettings(settings);
+      const stored = await chrome.storage.local.get({
+        ...defaults,
+        [migrationKey]: ""
+      });
+
+      if (stored[migrationKey] !== version) {
+        await chrome.storage.local.set({
+          ...defaults,
+          [migrationKey]: version
+        });
+        applySettings(defaults);
+        return;
+      }
+
+      applySettings(stored);
     } catch {
       applySettings(defaults);
     }
