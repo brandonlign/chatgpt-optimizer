@@ -14,9 +14,23 @@
         color: #f5f5f5;
       }
 
+      .heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
       h1 {
-        margin: 0 0 12px;
+        margin: 0;
         font-size: 17px;
+      }
+
+      #version {
+        color: #9ad6b4;
+        font-size: 12px;
+        font-weight: 700;
       }
 
       label {
@@ -36,7 +50,7 @@
         margin-top: 10px;
         color: #aaa;
         font-size: 12px;
-        line-height: 1.35;
+        line-height: 1.4;
       }
 
       #status {
@@ -48,16 +62,14 @@
     </style>
   </head>
   <body>
-    <h1>ChatGPT Optimizer</h1>
+    <div class="heading">
+      <h1>ChatGPT Optimizer</h1>
+      <span id="version"></span>
+    </div>
 
     <label>
       <input id="reduceBlur" type="checkbox" />
       Remove background blur
-    </label>
-
-    <label>
-      <input id="optimizeSidebar" type="checkbox" />
-      Optimize sidebar conversations
     </label>
 
     <label>
@@ -70,7 +82,9 @@
       Remove shadows
     </label>
 
-    <div class="note">Off-screen message optimization is always enabled. Aggressive options are off by default.</div>
+    <div class="note">
+      Safe mode is active. Risky message and sidebar virtualization have been removed. All optional tweaks are off by default.
+    </div>
     <div id="status" aria-live="polite"></div>
 
     <script src="popup.js"></script>
