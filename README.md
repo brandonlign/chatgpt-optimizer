@@ -2,19 +2,19 @@
 
 A lightweight Manifest V3 Chrome extension for improving responsiveness in long ChatGPT conversations.
 
-## What it does
+## What version 1.5.0 does
 
-- Uses `content-visibility: auto` so Chrome can skip rendering off-screen conversation turns.
-- Optimizes off-screen sidebar conversations.
-- Removes expensive backdrop blur by default.
-- Provides optional animation and shadow reduction.
-- Makes no network requests and does not repeatedly scan or mutate the ChatGPT page.
+- Hides conversation turns during the initial long-chat load.
+- Keeps only the newest 10 turns visible after loading.
+- Automatically scrolls to the latest message.
+- Lets you reveal 10 more turns, reveal everything, or return to the newest 10.
+- Re-trims the page when new turns are added.
+- Pauses media inside hidden turns.
+- Requests lazy image loading and asynchronous image decoding for visible turns.
+- Removes backdrop blur, shadows, smooth scrolling, and most decorative animations.
+- Makes no network requests.
 
-## Why version 1.2 is safer
-
-The earlier local version used a `MutationObserver` that reacted to nearly every DOM update and repeatedly rescanned the whole conversation. ChatGPT changes the page constantly while streaming, so that design could create a feedback loop and freeze the tab.
-
-This version has no DOM observer and no page-wide scanning loop. Dynamic messages are handled directly by CSS selectors.
+Older turns stay in ChatGPT's DOM and are not deleted. They are hidden with `display: none`, so they stop participating in layout and paint until revealed.
 
 ## Install on macOS
 
@@ -33,8 +33,4 @@ Then enable **Developer mode**, choose **Load unpacked**, and select `~/Desktop/
 bash ~/Desktop/chatgpt-optimizer/update.sh
 ```
 
-Then press **Reload** on the extension card and refresh ChatGPT.
-
-## Settings
-
-Click the extension icon in Chrome. Off-screen message optimization is always enabled. Blur and sidebar optimization are enabled by default; animation and shadow reduction are optional.
+Then press **Reload** on the extension card and hard-refresh ChatGPT with **Command + Shift + R**.
