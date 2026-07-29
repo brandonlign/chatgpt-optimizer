@@ -1,57 +1,42 @@
-/*
- * Safe mode: no content-visibility containment, no sidebar virtualization,
- * no MutationObserver, and no repeated conversation scans.
- */
-
-html {
-  scroll-behavior: auto !important;
+/* Prevent conversation turns from painting while the bounded loader counts them. */
+html.cgo-preparing-long-chat [data-testid^="conversation-turn-"] {
+  display: none !important;
 }
 
-#cgo-extension-indicator {
+/* Old turns remain in ChatGPT's DOM but do not participate in layout or paint. */
+.cgo-hidden-turn {
+  display: none !important;
+}
+
+#cgo-long-chat-status {
   position: fixed;
   left: 12px;
   bottom: 12px;
   z-index: 2147483647;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
-  background: rgba(20, 20, 20, 0.88);
-  color: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  letter-spacing: 0.01em;
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-select: none;
+  gap: 8px;
+  max-width: calc(100vw - 24px);
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(20, 20, 20, 0.94);
+  color: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.28);
+  font: 600 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-#cgo-extension-indicator .cgo-indicator-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #35c46a;
-  box-shadow: 0 0 0 2px rgba(53, 196, 106, 0.18);
+#cgo-long-chat-status button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 7px;
+  padding: 4px 7px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
-/* Optional visual reductions. All are off by default. */
-html.cgo-no-blur [class*="backdrop-blur"] {
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-}
-
-html.cgo-reduce-motion main [class*="transition-"] {
-  transition-duration: 0.001ms !important;
-  transition-delay: 0ms !important;
-}
-
-html.cgo-reduce-motion main [class*="animate-"]:not([class*="animate-spin"]) {
-  animation-duration: 0.001ms !important;
-  animation-iteration-count: 1 !important;
-}
-
-html.cgo-no-shadows main [class*="shadow-"] {
-  box-shadow: none !important;
+#cgo-long-chat-status button:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
