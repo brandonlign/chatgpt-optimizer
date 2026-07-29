@@ -110,7 +110,8 @@
       previousCount = count;
       samples += 1;
 
-      if ((count > 0 && stableSamples >= 3) || samples >= 28) {
+      const stableAfterWarmup = samples >= 8 && stableSamples >= 3;
+      if ((count > 0 && stableAfterWarmup) || samples >= 28) {
         applyLongChatMode(Array.from(document.querySelectorAll(turnSelector)));
         return;
       }
