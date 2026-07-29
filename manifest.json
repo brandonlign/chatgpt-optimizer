@@ -1,9 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Optimizer",
-  "version": "1.3.0",
-  "description": "Safe local performance controls with an on-page version indicator.",
-  "permissions": ["storage"],
+  "version": "1.4.0",
+  "description": "Loads long ChatGPT conversations with only the newest turns visible.",
   "action": {
     "default_title": "ChatGPT Optimizer",
     "default_popup": "popup.html"
