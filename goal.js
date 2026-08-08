@@ -5,10 +5,12 @@
   const GOAL_BLOCKED_MARKER = "[CGO_GOAL_BLOCKED]";
   const GOAL_KEY_PREFIX = "cgoGoal:";
   const LEASE_KEY_PREFIX = "cgoGoalLease:";
-  const stableDelayMs = 2200;
-  const leaseDurationMs = 7000;
+  const STABLE_DELAY_MS = 2500;
+  const LEASE_DURATION_MS = 8000;
+  const WATCHDOG_MS = 500;
   const instanceId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-  const stopButtonSelector = [
+
+  const STOP_SELECTOR = [
     '[data-testid="stop-button"]',
     'button[data-testid*="stop" i]',
     'button[aria-label*="Stop generating" i]',
@@ -16,24 +18,19 @@
     'button[aria-label="Stop" i]'
   ].join(", ");
 
-  let currentChatId = getConversationId();
+  let currentChatId = "";
+  let loadedGoalKey = "";
   let goal = { enabled: false, text: "" };
-  let goalSending = false;
+  let sending = false;
   let candidateKey = "";
   let candidateSignature = "";
   let candidateStableSince = 0;
   let lastPromptedAssistantKey = "";
-  let loadedGoalKey = "";
-  let wasGenerating = false;
-  let manualStopPending = false;
-
-  // Disable the v2.0.0 legacy global Goal Mode. Chat-specific Goal Mode below
-  // is the only continuation engine from v2.0.1 onward.
-  void chrome.storage.sync.set({ goalEnabled: false, goalText: "" });
+  let lastGenerating = false;
+  let manualStopSeen = false;
 
   function getConversationId() {
-    const match = location.pathname.match(/\/c\/([^/?#]+)/);
-    return match?.[1] || "";
+    return location.pathname.match(/\/c\/([^/?#]+)/)?.[1] || "";
   }
 
   function goalKey(chatId) {
@@ -45,13 +42,13 @@
   }
 
   function resetTracking() {
-    goalSending = false;
+    sending = false;
     candidateKey = "";
     candidateSignature = "";
     candidateStableSince = 0;
     lastPromptedAssistantKey = "";
-    wasGenerating = false;
-    manualStopPending = false;
+    lastGenerating = false;
+    manualStopSeen = false;
   }
 
   async function loadGoalForCurrentChat() {
@@ -69,8 +66,6 @@
     loadedGoalKey = key;
     const stored = await chrome.storage.local.get(key);
     const value = stored[key] || {};
-
-    // Ignore a stale async read if SPA navigation moved to another chat.
     if (chatId !== getConversationId()) return;
 
     goal = {
@@ -94,13 +89,11 @@
 
   function getAssistantTurns() {
     const turns = getTurns();
-    const roleMatched = turns.filter((turn) => getTurnRole(turn) === "assistant");
-    if (roleMatched.length > 0) return roleMatched;
+    const matched = turns.filter((turn) => getTurnRole(turn) === "assistant");
+    if (matched.length) return matched;
 
-    // Interrupted responses can briefly expose a different wrapper shape. Fall back
-    // to locating assistant-role nodes and walking back to their conversation turn.
-    const seen = new Set();
     const recovered = [];
+    const seen = new Set();
     for (const node of document.querySelectorAll('[data-message-author-role="assistant"]')) {
       const turn = node.closest('[data-testid^="conversation-turn-"]') || node;
       if (!seen.has(turn)) {
@@ -111,51 +104,51 @@
     return recovered;
   }
 
-  function getTurnKey(turn, index = 0) {
-    if (!turn) return "";
+  function assistantIsLatest(latestAssistant) {
+    const turns = getTurns();
+    const latestTurn = turns.at(-1);
+    if (!latestTurn || !latestAssistant) return false;
+
+    const role = getTurnRole(latestTurn);
+    if (role) return role === "assistant";
+
     return (
-      turn.getAttribute("data-testid") ||
-      turn.getAttribute("data-message-id") ||
-      turn.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
-      `${index}:${(turn.innerText || turn.textContent || "").slice(0, 120)}`
+      latestTurn === latestAssistant ||
+      latestTurn.contains(latestAssistant) ||
+      latestAssistant.contains(latestTurn)
     );
   }
 
-  function getAssistantSignature(turn) {
-    const text = (turn?.innerText || turn?.textContent || "").trim();
-    return `${text.length}:${text.slice(-160)}`;
+  function getTurnKey(turn, index = 0) {
+    if (!turn) return "";
+    return (
+      turn.getAttribute("data-message-id") ||
+      turn.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
+      turn.getAttribute("data-testid") ||
+      `${index}:${(turn.innerText || turn.textContent || "").slice(0, 160)}`
+    );
   }
 
-  function findStopButton() {
-    return document.querySelector(stopButtonSelector);
+  function getSignature(turn) {
+    const text = (turn?.innerText || turn?.textContent || "").trim();
+    return `${text.length}:${text.slice(-240)}`;
   }
 
   function isGenerating() {
-    return Boolean(findStopButton());
-  }
-
-  function noteManualStop() {
-    if (!goal.enabled || !goal.text.trim() || !getConversationId()) return;
-    manualStopPending = true;
-    wasGenerating = true;
-    candidateKey = "";
-    candidateSignature = "";
-    candidateStableSince = 0;
-    console.info("[ChatGPT Optimizer] Manual stop detected; Goal Mode will continue after the partial reply stabilizes.");
+    return Boolean(document.querySelector(STOP_SELECTOR));
   }
 
   function findComposer() {
     const selectors = [
       "#prompt-textarea",
       'textarea[data-testid="prompt-textarea"]',
-      '[contenteditable="true"][data-testid="composer-input"]'
+      '[contenteditable="true"][data-testid="composer-input"]',
+      '.ProseMirror[contenteditable="true"]'
     ];
-
     for (const selector of selectors) {
       const element = document.querySelector(selector);
       if (element) return element;
     }
-
     return null;
   }
 
@@ -181,49 +174,54 @@
       return true;
     }
 
-    let inserted = false;
     try {
       const selection = window.getSelection();
       const range = document.createRange();
       range.selectNodeContents(composer);
       selection.removeAllRanges();
       selection.addRange(range);
-      inserted = document.execCommand("insertText", false, text);
+      const inserted = document.execCommand("insertText", false, text);
       selection.removeAllRanges();
+      if (inserted) return true;
     } catch {
-      inserted = false;
+      // Fall through to direct contenteditable update.
     }
 
-    if (!inserted) {
-      composer.textContent = text;
-      try {
-        composer.dispatchEvent(
-          new InputEvent("input", {
-            bubbles: true,
-            inputType: "insertText",
-            data: text
-          })
-        );
-      } catch {
-        composer.dispatchEvent(new Event("input", { bubbles: true }));
-      }
+    composer.textContent = text;
+    try {
+      composer.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: text
+      }));
+    } catch {
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
     }
-
     return true;
   }
 
-  function findSendButton() {
+  function findSendButton(composer) {
+    const scopes = [];
+    const form = composer?.closest("form");
+    if (form) scopes.push(form);
+    const composerArea = composer?.closest('[data-testid*="composer" i]');
+    if (composerArea && composerArea !== form) scopes.push(composerArea);
+    scopes.push(document);
+
     const selectors = [
       '[data-testid="send-button"]',
       'button[aria-label="Send prompt"]',
-      'button[aria-label="Send message"]'
+      'button[aria-label="Send message"]',
+      'button[aria-label^="Send" i]',
+      'button[type="submit"]'
     ];
 
-    for (const selector of selectors) {
-      const button = document.querySelector(selector);
-      if (button) return button;
+    for (const scope of scopes) {
+      for (const selector of selectors) {
+        const button = scope.querySelector(selector);
+        if (button) return button;
+      }
     }
-
     return null;
   }
 
@@ -231,86 +229,58 @@
     return `Continue working autonomously toward this goal:\n\n${goal.text.trim()}\n\nTake concrete steps now instead of giving only a status update or plan. Keep making progress until the goal is actually complete or you hit a real blocker. If the goal is fully complete, put ${GOAL_COMPLETE_MARKER} on its own final line. If you cannot continue without new information, access, or a user decision, put ${GOAL_BLOCKED_MARKER} on its own final line.`;
   }
 
-  async function waitForSendButton(timeoutMs = 3500) {
-    const started = Date.now();
-
-    while (Date.now() - started < timeoutMs) {
-      const button = findSendButton();
-      if (button && !button.disabled && button.getAttribute("aria-disabled") !== "true") {
-        return button;
-      }
+  async function waitForSendButton(composer, timeoutMs = 5000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const button = findSendButton(composer);
+      if (button && !button.disabled && button.getAttribute("aria-disabled") !== "true") return button;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-
     return null;
   }
 
   async function acquireLease(chatId) {
-    if (!chatId) return false;
     const key = leaseKey(chatId);
     const now = Date.now();
-    const existing = (await chrome.storage.local.get(key))[key];
+    const current = (await chrome.storage.local.get(key))[key];
+    if (current && current.owner !== instanceId && Number(current.expiresAt) > now) return false;
 
-    if (existing && existing.owner !== instanceId && Number(existing.expiresAt) > now) {
-      return false;
-    }
-
-    const mine = { owner: instanceId, expiresAt: now + leaseDurationMs };
-    await chrome.storage.local.set({ [key]: mine });
+    await chrome.storage.local.set({
+      [key]: { owner: instanceId, expiresAt: now + LEASE_DURATION_MS }
+    });
     const confirmed = (await chrome.storage.local.get(key))[key];
     return confirmed?.owner === instanceId;
   }
 
   async function releaseLease(chatId) {
-    if (!chatId) return;
     const key = leaseKey(chatId);
-    const existing = (await chrome.storage.local.get(key))[key];
-    if (existing?.owner === instanceId) {
-      await chrome.storage.local.remove(key);
-    }
+    const current = (await chrome.storage.local.get(key))[key];
+    if (current?.owner === instanceId) await chrome.storage.local.remove(key);
   }
 
   async function sendGoalPrompt() {
     const chatId = getConversationId();
     if (
-      goalSending ||
-      !chatId ||
-      chatId !== currentChatId ||
-      !goal.enabled ||
-      !goal.text.trim() ||
-      document.hidden ||
-      isGenerating()
-    ) {
-      return false;
-    }
+      sending || !chatId || chatId !== currentChatId || !goal.enabled ||
+      !goal.text.trim() || isGenerating()
+    ) return false;
 
+    const composer = findComposer();
+    if (!composer || readComposerText(composer).trim()) return false;
     if (!(await acquireLease(chatId))) return false;
 
-    goalSending = true;
+    sending = true;
     try {
-      // Re-check everything after the async lease claim.
-      if (chatId !== getConversationId() || !goal.enabled || document.hidden || isGenerating()) {
-        return false;
-      }
-
-      const composer = findComposer();
-      if (!composer || readComposerText(composer).trim()) return false;
+      if (chatId !== getConversationId() || !goal.enabled || isGenerating()) return false;
+      if (readComposerText(composer).trim()) return false;
       if (!writeComposerText(composer, buildGoalPrompt())) return false;
 
-      const button = await waitForSendButton();
-      if (
-        !button ||
-        !goal.enabled ||
-        chatId !== getConversationId() ||
-        document.hidden
-      ) {
-        return false;
-      }
-
+      const button = await waitForSendButton(composer);
+      if (!button || !goal.enabled || chatId !== getConversationId() || isGenerating()) return false;
       button.click();
       return true;
     } finally {
-      goalSending = false;
+      sending = false;
       await releaseLease(chatId);
     }
   }
@@ -318,46 +288,31 @@
   async function stopCurrentGoal(reason) {
     const chatId = getConversationId();
     if (!chatId || chatId !== currentChatId || !goal.enabled) return;
-
     goal = { ...goal, enabled: false };
     resetTracking();
+
     const key = goalKey(chatId);
     const stored = (await chrome.storage.local.get(key))[key] || {};
     await chrome.storage.local.set({
-      [key]: {
-        ...stored,
-        enabled: false,
-        stoppedReason: reason,
-        updatedAt: Date.now()
-      }
+      [key]: { ...stored, enabled: false, stoppedReason: reason, updatedAt: Date.now() }
     });
-    console.info(`[ChatGPT Optimizer] Goal Mode stopped for ${chatId}: ${reason}`);
   }
 
   async function maybeAdvanceGoal() {
     const chatId = getConversationId();
     if (
-      goalSending ||
-      !chatId ||
-      chatId !== currentChatId ||
-      !goal.enabled ||
-      !goal.text.trim() ||
-      document.hidden
-    ) {
-      return;
-    }
+      sending || !chatId || chatId !== currentChatId || !goal.enabled || !goal.text.trim()
+    ) return;
 
     const generating = isGenerating();
     if (generating) {
-      wasGenerating = true;
+      lastGenerating = true;
       candidateStableSince = 0;
       return;
     }
 
-    // Treat the transition from generating -> stopped as an explicit continuation
-    // trigger. This includes clicking ChatGPT's Stop button and normal completion.
-    if (wasGenerating) {
-      wasGenerating = false;
+    if (lastGenerating) {
+      lastGenerating = false;
       candidateKey = "";
       candidateSignature = "";
       candidateStableSince = Date.now();
@@ -365,7 +320,7 @@
 
     const assistantTurns = getAssistantTurns();
     const latestAssistant = assistantTurns.at(-1);
-    if (!latestAssistant) return;
+    if (!latestAssistant || !assistantIsLatest(latestAssistant)) return;
 
     const latestText = (latestAssistant.innerText || latestAssistant.textContent || "").trim();
     if (latestText.includes(GOAL_COMPLETE_MARKER)) {
@@ -380,7 +335,7 @@
     const key = getTurnKey(latestAssistant, assistantTurns.length - 1);
     if (!key || key === lastPromptedAssistantKey) return;
 
-    const signature = getAssistantSignature(latestAssistant);
+    const signature = getSignature(latestAssistant);
     const now = Date.now();
     if (candidateKey !== key || candidateSignature !== signature) {
       candidateKey = key;
@@ -389,37 +344,44 @@
       return;
     }
 
-    if (now - candidateStableSince < stableDelayMs) return;
+    if (!candidateStableSince) candidateStableSince = now;
+    if (now - candidateStableSince < STABLE_DELAY_MS) return;
+
+    const composer = findComposer();
+    if (!composer || readComposerText(composer).trim()) return;
 
     if (await sendGoalPrompt()) {
       lastPromptedAssistantKey = key;
       candidateStableSince = 0;
-      manualStopPending = false;
+      manualStopSeen = false;
     }
   }
 
-  document.addEventListener(
-    "click",
-    (event) => {
-      const target = event.target instanceof Element ? event.target : null;
-      const button = target?.closest("button");
-      if (!button) return;
+  function kickWatchdog() {
+    setTimeout(() => void maybeAdvanceGoal(), 50);
+    setTimeout(() => void maybeAdvanceGoal(), STABLE_DELAY_MS + 150);
+  }
 
-      const label = `${button.getAttribute("aria-label") || ""} ${button.getAttribute("data-testid") || ""} ${button.textContent || ""}`.toLowerCase();
-      if (button.matches(stopButtonSelector) || (isGenerating() && label.includes("stop"))) {
-        noteManualStop();
-      }
-    },
-    true
-  );
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const button = target?.closest("button");
+    if (!button) return;
+    const label = `${button.getAttribute("aria-label") || ""} ${button.getAttribute("data-testid") || ""} ${button.textContent || ""}`.toLowerCase();
+    if (button.matches(STOP_SELECTOR) || label.includes("stop")) {
+      manualStopSeen = true;
+      candidateKey = "";
+      candidateSignature = "";
+      candidateStableSince = 0;
+      kickWatchdog();
+    }
+  }, true);
 
-  document.addEventListener(
-    "keydown",
-    (event) => {
-      if (event.key === "Escape" && isGenerating()) noteManualStop();
-    },
-    true
-  );
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && isGenerating()) {
+      manualStopSeen = true;
+      kickWatchdog();
+    }
+  }, true);
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== "CGO_GET_CHAT_CONTEXT") return false;
@@ -429,7 +391,8 @@
       title: document.title,
       goalEnabled: goal.enabled,
       generating: isGenerating(),
-      manualStopPending
+      idle: !isGenerating(),
+      manualStopSeen
     });
     return false;
   });
@@ -442,16 +405,18 @@
       text: typeof value.text === "string" ? value.text : ""
     };
     resetTracking();
+    kickWatchdog();
   });
 
-  void loadGoalForCurrentChat();
+  void chrome.storage.sync.set({ goalEnabled: false, goalText: "" });
+  void loadGoalForCurrentChat().then(kickWatchdog);
 
   setInterval(() => {
     const chatId = getConversationId();
     if (chatId !== currentChatId) {
-      void loadGoalForCurrentChat();
+      void loadGoalForCurrentChat().then(kickWatchdog);
       return;
     }
     void maybeAdvanceGoal();
-  }, 500);
+  }, WATCHDOG_MS);
 })();
