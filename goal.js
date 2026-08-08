@@ -6,8 +6,8 @@
   const GOAL_KEY_PREFIX = "cgoGoal:";
   const LEASE_KEY_PREFIX = "cgoGoalLease:";
   const STABLE_DELAY_MS = 2500;
-  const LEASE_DURATION_MS = 8000;
   const WATCHDOG_MS = 500;
+  const LEASE_DURATION_MS = 10000;
   const instanceId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 
   const STOP_SELECTOR = [
@@ -27,7 +27,13 @@
   let candidateStableSince = 0;
   let lastPromptedAssistantKey = "";
   let lastGenerating = false;
-  let manualStopSeen = false;
+  let debugState = "starting";
+
+  function setDebug(state) {
+    if (debugState === state) return;
+    debugState = state;
+    console.info(`[ChatGPT Optimizer] Goal Mode: ${state}`);
+  }
 
   function getConversationId() {
     return location.pathname.match(/\/c\/([^/?#]+)/)?.[1] || "";
@@ -48,7 +54,6 @@
     candidateStableSince = 0;
     lastPromptedAssistantKey = "";
     lastGenerating = false;
-    manualStopSeen = false;
   }
 
   async function loadGoalForCurrentChat() {
@@ -59,6 +64,7 @@
     if (!chatId) {
       loadedGoalKey = "";
       goal = { enabled: false, text: "" };
+      setDebug("not a saved chat");
       return;
     }
 
@@ -72,51 +78,82 @@
       enabled: Boolean(value.enabled),
       text: typeof value.text === "string" ? value.text : ""
     };
+    setDebug(goal.enabled ? "enabled" : "disabled");
+  }
+
+  function uniqueElements(elements) {
+    const seen = new Set();
+    return elements.filter((element) => {
+      if (!element || seen.has(element)) return false;
+      seen.add(element);
+      return true;
+    });
   }
 
   function getTurns() {
-    return Array.from(document.querySelectorAll('[data-testid^="conversation-turn-"]'));
+    const current = Array.from(document.querySelectorAll("[data-turn]"));
+    if (current.length) return current;
+
+    const legacy = Array.from(document.querySelectorAll('[data-testid^="conversation-turn-"]'));
+    if (legacy.length) return legacy;
+
+    return Array.from(document.querySelectorAll("main article"));
   }
 
   function getTurnRole(turn) {
     if (!turn) return "";
-    return (
-      turn.getAttribute("data-message-author-role") ||
-      turn.querySelector("[data-message-author-role]")?.getAttribute("data-message-author-role") ||
-      ""
-    );
+
+    const dataTurn = (turn.getAttribute("data-turn") || "").toLowerCase();
+    if (dataTurn === "assistant" || dataTurn === "user") return dataTurn;
+
+    const direct = (turn.getAttribute("data-message-author-role") || "").toLowerCase();
+    if (direct === "assistant" || direct === "user") return direct;
+
+    const nestedRole = turn.querySelector("[data-message-author-role]")?.getAttribute("data-message-author-role")?.toLowerCase();
+    if (nestedRole === "assistant" || nestedRole === "user") return nestedRole;
+
+    if (turn.querySelector('[data-message-author-role="assistant"]')) return "assistant";
+    if (turn.querySelector('[data-message-author-role="user"]')) return "user";
+    return "";
   }
 
   function getAssistantTurns() {
-    const turns = getTurns();
-    const matched = turns.filter((turn) => getTurnRole(turn) === "assistant");
-    if (matched.length) return matched;
+    const turns = getTurns().filter((turn) => getTurnRole(turn) === "assistant");
+    if (turns.length) return turns;
 
-    const recovered = [];
-    const seen = new Set();
-    for (const node of document.querySelectorAll('[data-message-author-role="assistant"]')) {
-      const turn = node.closest('[data-testid^="conversation-turn-"]') || node;
-      if (!seen.has(turn)) {
-        seen.add(turn);
-        recovered.push(turn);
-      }
-    }
-    return recovered;
+    const recovered = Array.from(document.querySelectorAll('[data-message-author-role="assistant"]')).map(
+      (node) => node.closest('[data-turn], [data-testid^="conversation-turn-"], article') || node
+    );
+    return uniqueElements(recovered);
+  }
+
+  function latestRoleInDocument() {
+    const roleNodes = Array.from(
+      document.querySelectorAll('[data-turn="user"], [data-turn="assistant"], [data-message-author-role="user"], [data-message-author-role="assistant"]')
+    );
+    const last = roleNodes.at(-1);
+    if (!last) return "";
+
+    const dataTurn = (last.getAttribute("data-turn") || "").toLowerCase();
+    if (dataTurn === "assistant" || dataTurn === "user") return dataTurn;
+
+    const role = (last.getAttribute("data-message-author-role") || "").toLowerCase();
+    if (role === "assistant" || role === "user") return role;
+
+    return getTurnRole(last.closest('[data-turn], [data-testid^="conversation-turn-"], article') || last);
   }
 
   function assistantIsLatest(latestAssistant) {
+    const role = latestRoleInDocument();
+    if (role) return role === "assistant";
+
     const turns = getTurns();
     const latestTurn = turns.at(-1);
     if (!latestTurn || !latestAssistant) return false;
+    const latestTurnRole = getTurnRole(latestTurn);
+    if (latestTurnRole) return latestTurnRole === "assistant";
 
-    const role = getTurnRole(latestTurn);
-    if (role) return role === "assistant";
-
-    return (
-      latestTurn === latestAssistant ||
-      latestTurn.contains(latestAssistant) ||
-      latestAssistant.contains(latestTurn)
-    );
+    return latestTurn === latestAssistant || latestTurn.contains(latestAssistant) || latestAssistant.contains(latestTurn);
   }
 
   function getTurnKey(turn, index = 0) {
@@ -125,13 +162,14 @@
       turn.getAttribute("data-message-id") ||
       turn.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
       turn.getAttribute("data-testid") ||
-      `${index}:${(turn.innerText || turn.textContent || "").slice(0, 160)}`
+      turn.getAttribute("data-turn") ||
+      `${index}:${(turn.innerText || turn.textContent || "").slice(0, 180)}`
     );
   }
 
   function getSignature(turn) {
     const text = (turn?.innerText || turn?.textContent || "").trim();
-    return `${text.length}:${text.slice(-240)}`;
+    return `${text.length}:${text.slice(-260)}`;
   }
 
   function isGenerating() {
@@ -140,14 +178,23 @@
 
   function findComposer() {
     const selectors = [
+      "div#prompt-textarea.ProseMirror",
       "#prompt-textarea",
       'textarea[data-testid="prompt-textarea"]',
+      'textarea[data-id="root"]',
+      'div[contenteditable="true"][data-id]',
       '[contenteditable="true"][data-testid="composer-input"]',
       '.ProseMirror[contenteditable="true"]'
     ];
+
     for (const selector of selectors) {
-      const element = document.querySelector(selector);
-      if (element) return element;
+      const candidates = Array.from(document.querySelectorAll(selector));
+      const visible = candidates.find((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+      if (visible) return visible;
+      if (candidates[0]) return candidates[0];
     }
     return null;
   }
@@ -158,7 +205,20 @@
     return composer.innerText || composer.textContent || "";
   }
 
-  function writeComposerText(composer, text) {
+  function dispatchInput(composer, text) {
+    try {
+      composer.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        cancelable: false,
+        inputType: "insertText",
+        data: text
+      }));
+    } catch {
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
+  async function writeComposerText(composer, text) {
     if (!composer) return false;
     composer.focus();
 
@@ -169,57 +229,53 @@
       const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
       if (setter) setter.call(composer, text);
       else composer.value = text;
-      composer.dispatchEvent(new Event("input", { bubbles: true }));
+      dispatchInput(composer, text);
       composer.dispatchEvent(new Event("change", { bubbles: true }));
-      return true;
+    } else {
+      let inserted = false;
+      try {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(composer);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        inserted = document.execCommand("insertText", false, text);
+        selection.removeAllRanges();
+      } catch {
+        inserted = false;
+      }
+
+      if (!inserted) {
+        composer.replaceChildren(document.createTextNode(text));
+        dispatchInput(composer, text);
+      }
     }
 
-    try {
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(composer);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      const inserted = document.execCommand("insertText", false, text);
-      selection.removeAllRanges();
-      if (inserted) return true;
-    } catch {
-      // Fall through to direct contenteditable update.
-    }
-
-    composer.textContent = text;
-    try {
-      composer.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: text
-      }));
-    } catch {
-      composer.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    return true;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const written = readComposerText(composer).trim();
+    return written.length > 0 && written.includes(text.trim().slice(0, 24));
   }
 
   function findSendButton(composer) {
-    const scopes = [];
-    const form = composer?.closest("form");
-    if (form) scopes.push(form);
-    const composerArea = composer?.closest('[data-testid*="composer" i]');
-    if (composerArea && composerArea !== form) scopes.push(composerArea);
-    scopes.push(document);
-
     const selectors = [
-      '[data-testid="send-button"]',
+      'button[data-testid="send-button"]',
       'button[aria-label="Send prompt"]',
       'button[aria-label="Send message"]',
       'button[aria-label^="Send" i]',
-      'button[type="submit"]'
+      'form button[type="submit"]'
     ];
+
+    const form = composer?.closest("form");
+    const scopes = form ? [form, document] : [document];
 
     for (const scope of scopes) {
       for (const selector of selectors) {
-        const button = scope.querySelector(selector);
-        if (button) return button;
+        const buttons = Array.from(scope.querySelectorAll(selector));
+        const usable = buttons.find((button) => {
+          const rect = button.getBoundingClientRect();
+          return !button.disabled && button.getAttribute("aria-disabled") !== "true" && rect.width > 0 && rect.height > 0;
+        });
+        if (usable) return usable;
       }
     }
     return null;
@@ -229,14 +285,50 @@
     return `Continue working autonomously toward this goal:\n\n${goal.text.trim()}\n\nTake concrete steps now instead of giving only a status update or plan. Keep making progress until the goal is actually complete or you hit a real blocker. If the goal is fully complete, put ${GOAL_COMPLETE_MARKER} on its own final line. If you cannot continue without new information, access, or a user decision, put ${GOAL_BLOCKED_MARKER} on its own final line.`;
   }
 
-  async function waitForSendButton(composer, timeoutMs = 5000) {
+  async function waitForSubmission(composer, previousUserCount, timeoutMs = 1800) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const button = findSendButton(composer);
-      if (button && !button.disabled && button.getAttribute("aria-disabled") !== "true") return button;
+      const userCount = document.querySelectorAll('[data-turn="user"], [data-message-author-role="user"]').length;
+      if (isGenerating() || userCount > previousUserCount || !readComposerText(composer).trim()) return true;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    return null;
+    return false;
+  }
+
+  function dispatchEnter(composer) {
+    const options = {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    };
+    composer.dispatchEvent(new KeyboardEvent("keydown", options));
+    composer.dispatchEvent(new KeyboardEvent("keyup", options));
+  }
+
+  async function submitComposer(composer) {
+    const previousUserCount = document.querySelectorAll('[data-turn="user"], [data-message-author-role="user"]').length;
+
+    const button = findSendButton(composer);
+    if (button) {
+      button.click();
+      if (await waitForSubmission(composer, previousUserCount)) return true;
+    }
+
+    const form = composer.closest("form");
+    if (form && typeof form.requestSubmit === "function") {
+      try {
+        form.requestSubmit();
+        if (await waitForSubmission(composer, previousUserCount)) return true;
+      } catch {
+        // Fall through to keyboard submission.
+      }
+    }
+
+    dispatchEnter(composer);
+    return await waitForSubmission(composer, previousUserCount, 2500);
   }
 
   async function acquireLease(chatId) {
@@ -260,24 +352,42 @@
 
   async function sendGoalPrompt() {
     const chatId = getConversationId();
-    if (
-      sending || !chatId || chatId !== currentChatId || !goal.enabled ||
-      !goal.text.trim() || isGenerating()
-    ) return false;
+    if (sending || !chatId || chatId !== currentChatId || !goal.enabled || !goal.text.trim() || isGenerating()) {
+      return false;
+    }
 
     const composer = findComposer();
-    if (!composer || readComposerText(composer).trim()) return false;
-    if (!(await acquireLease(chatId))) return false;
+    if (!composer) {
+      setDebug("idle, but composer not found");
+      return false;
+    }
+    if (readComposerText(composer).trim()) {
+      setDebug("paused: composer contains your draft");
+      return false;
+    }
+    if (!(await acquireLease(chatId))) {
+      setDebug("waiting: another tab owns this chat");
+      return false;
+    }
 
     sending = true;
     try {
       if (chatId !== getConversationId() || !goal.enabled || isGenerating()) return false;
-      if (readComposerText(composer).trim()) return false;
-      if (!writeComposerText(composer, buildGoalPrompt())) return false;
 
-      const button = await waitForSendButton(composer);
-      if (!button || !goal.enabled || chatId !== getConversationId() || isGenerating()) return false;
-      button.click();
+      const prompt = buildGoalPrompt();
+      setDebug("writing continuation into composer");
+      if (!(await writeComposerText(composer, prompt))) {
+        setDebug("failed to write into composer");
+        return false;
+      }
+
+      setDebug("submitting continuation");
+      if (!(await submitComposer(composer))) {
+        setDebug("text inserted, but submit failed");
+        return false;
+      }
+
+      setDebug("continuation sent");
       return true;
     } finally {
       sending = false;
@@ -288,26 +398,25 @@
   async function stopCurrentGoal(reason) {
     const chatId = getConversationId();
     if (!chatId || chatId !== currentChatId || !goal.enabled) return;
+
     goal = { ...goal, enabled: false };
     resetTracking();
-
     const key = goalKey(chatId);
     const stored = (await chrome.storage.local.get(key))[key] || {};
     await chrome.storage.local.set({
       [key]: { ...stored, enabled: false, stoppedReason: reason, updatedAt: Date.now() }
     });
+    setDebug(`stopped: ${reason}`);
   }
 
   async function maybeAdvanceGoal() {
     const chatId = getConversationId();
-    if (
-      sending || !chatId || chatId !== currentChatId || !goal.enabled || !goal.text.trim()
-    ) return;
+    if (sending || !chatId || chatId !== currentChatId || !goal.enabled || !goal.text.trim()) return;
 
-    const generating = isGenerating();
-    if (generating) {
+    if (isGenerating()) {
       lastGenerating = true;
       candidateStableSince = 0;
+      setDebug("waiting for ChatGPT to finish");
       return;
     }
 
@@ -315,12 +424,19 @@
       lastGenerating = false;
       candidateKey = "";
       candidateSignature = "";
-      candidateStableSince = Date.now();
+      candidateStableSince = 0;
     }
 
     const assistantTurns = getAssistantTurns();
     const latestAssistant = assistantTurns.at(-1);
-    if (!latestAssistant || !assistantIsLatest(latestAssistant)) return;
+    if (!latestAssistant) {
+      setDebug("idle, but no assistant turn found");
+      return;
+    }
+    if (!assistantIsLatest(latestAssistant)) {
+      setDebug("waiting: latest turn is not assistant");
+      return;
+    }
 
     const latestText = (latestAssistant.innerText || latestAssistant.textContent || "").trim();
     if (latestText.includes(GOAL_COMPLETE_MARKER)) {
@@ -333,14 +449,19 @@
     }
 
     const key = getTurnKey(latestAssistant, assistantTurns.length - 1);
-    if (!key || key === lastPromptedAssistantKey) return;
-
     const signature = getSignature(latestAssistant);
+    if (!key || !signature) return;
+    if (key === lastPromptedAssistantKey) {
+      setDebug("waiting for next assistant reply");
+      return;
+    }
+
     const now = Date.now();
     if (candidateKey !== key || candidateSignature !== signature) {
       candidateKey = key;
       candidateSignature = signature;
       candidateStableSince = now;
+      setDebug("assistant reply settling");
       return;
     }
 
@@ -348,18 +469,25 @@
     if (now - candidateStableSince < STABLE_DELAY_MS) return;
 
     const composer = findComposer();
-    if (!composer || readComposerText(composer).trim()) return;
+    if (!composer) {
+      setDebug("idle, but composer not found");
+      return;
+    }
+    if (readComposerText(composer).trim()) {
+      setDebug("paused: composer contains your draft");
+      return;
+    }
 
+    setDebug("idle; continuing goal now");
     if (await sendGoalPrompt()) {
       lastPromptedAssistantKey = key;
       candidateStableSince = 0;
-      manualStopSeen = false;
     }
   }
 
   function kickWatchdog() {
     setTimeout(() => void maybeAdvanceGoal(), 50);
-    setTimeout(() => void maybeAdvanceGoal(), STABLE_DELAY_MS + 150);
+    setTimeout(() => void maybeAdvanceGoal(), STABLE_DELAY_MS + 200);
   }
 
   document.addEventListener("click", (event) => {
@@ -368,7 +496,6 @@
     if (!button) return;
     const label = `${button.getAttribute("aria-label") || ""} ${button.getAttribute("data-testid") || ""} ${button.textContent || ""}`.toLowerCase();
     if (button.matches(STOP_SELECTOR) || label.includes("stop")) {
-      manualStopSeen = true;
       candidateKey = "";
       candidateSignature = "";
       candidateStableSince = 0;
@@ -376,23 +503,22 @@
     }
   }, true);
 
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && isGenerating()) {
-      manualStopSeen = true;
-      kickWatchdog();
-    }
-  }, true);
-
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== "CGO_GET_CHAT_CONTEXT") return false;
+    const assistantTurns = getAssistantTurns();
+    const composer = findComposer();
     sendResponse({
       chatId: getConversationId(),
       pathname: location.pathname,
       title: document.title,
       goalEnabled: goal.enabled,
       generating: isGenerating(),
-      idle: !isGenerating(),
-      manualStopSeen
+      debugState,
+      turnCount: getTurns().length,
+      assistantTurnCount: assistantTurns.length,
+      latestRole: latestRoleInDocument(),
+      composerFound: Boolean(composer),
+      composerHasText: Boolean(readComposerText(composer).trim())
     });
     return false;
   });
@@ -405,6 +531,7 @@
       text: typeof value.text === "string" ? value.text : ""
     };
     resetTracking();
+    setDebug(goal.enabled ? "enabled; checking chat" : "disabled");
     kickWatchdog();
   });
 
