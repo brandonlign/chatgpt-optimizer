@@ -8,27 +8,26 @@ html.cgo-preparing-long-chat [data-testid^="conversation-turn-"] {
   display: none !important;
 }
 
-/* Remove visual effects that add compositing work. */
-html.cgo-max-performance,
-html.cgo-max-performance * {
+html.cgo-disable-smooth-scroll,
+html.cgo-disable-smooth-scroll * {
   scroll-behavior: auto !important;
 }
 
-html.cgo-max-performance [class*="backdrop-blur"] {
+html.cgo-disable-backdrop-blur [class*="backdrop-blur"] {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 
-html.cgo-max-performance main [class*="shadow-"] {
+html.cgo-disable-shadows main [class*="shadow-"] {
   box-shadow: none !important;
 }
 
-html.cgo-max-performance main [class*="transition-"] {
+html.cgo-disable-transitions main [class*="transition-"] {
   transition-duration: 0.001ms !important;
   transition-delay: 0ms !important;
 }
 
-html.cgo-max-performance main [class*="animate-"]:not([class*="animate-spin"]) {
+html.cgo-disable-animations main [class*="animate-"]:not([class*="animate-spin"]) {
   animation-duration: 0.001ms !important;
   animation-delay: 0ms !important;
   animation-iteration-count: 1 !important;
