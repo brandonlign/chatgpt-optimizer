@@ -1,10 +1,10 @@
 # ChatGPT Optimizer
 
-A lightweight Manifest V3 Chrome extension for improving responsiveness in long ChatGPT conversations and keeping ChatGPT working toward a persistent goal.
+A lightweight Manifest V3 Chrome extension for improving responsiveness in long ChatGPT conversations and keeping individual ChatGPT conversations working toward persistent goals.
 
-## What version 2.0.0 does
+## What version 2.0.1 does
 
-Every optimization can now be enabled or disabled independently from the extension popup.
+Every performance optimization can be enabled or disabled independently from the extension popup.
 
 ### Long-chat performance
 
@@ -26,18 +26,21 @@ Every optimization can now be enabled or disabled independently from the extensi
 
 Older turns stay in ChatGPT's DOM and are not deleted. When the newest-10 limiter is enabled, old turns are hidden with `display: none`, so they stop participating in layout and paint until revealed.
 
-### `/goal` mode
+### Chat-specific `/goal` mode
 
-The popup now includes a goal field and an **Enable** toggle. When Goal Mode is enabled, the extension watches the current ChatGPT page. After an assistant response has stopped changing and ChatGPT is no longer generating, the extension automatically submits a continuation prompt containing the saved goal.
+Open the ChatGPT conversation you want to automate, open the extension popup, enter that conversation's goal, and enable Goal Mode. Goals are stored separately under the conversation's `/c/<conversation-id>` identifier, so enabling a goal in one chat does not activate it in other ChatGPT conversations.
 
 Goal Mode:
 
 - waits for a completed assistant response before continuing;
 - does not overwrite text already typed into the composer;
 - waits until the send button is available;
-- can start a goal from a blank ChatGPT page;
-- automatically stops if ChatGPT returns `[CGO_GOAL_COMPLETE]` or `[CGO_GOAL_BLOCKED]` as instructed by the continuation prompt;
-- can be disabled at any time from the extension popup.
+- only runs when the tab containing that chat is visible;
+- uses a short per-conversation lease so two tabs showing the same chat do not both send a continuation;
+- automatically stops that chat's goal if ChatGPT returns `[CGO_GOAL_COMPLETE]` or `[CGO_GOAL_BLOCKED]` as instructed by the continuation prompt;
+- can be enabled or disabled independently for different saved conversations.
+
+For safety, Goal Mode requires a saved ChatGPT conversation with a `/c/<conversation-id>` URL. If the popup says **No saved conversation detected**, send the first message normally so ChatGPT creates the conversation, then open the popup again.
 
 The feature works by interacting with the ChatGPT web interface. If ChatGPT changes its composer, send-button, or conversation-turn markup, the relevant selectors may need to be updated.
 
