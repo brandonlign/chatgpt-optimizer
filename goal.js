@@ -8,6 +8,13 @@
   const stableDelayMs = 2200;
   const leaseDurationMs = 7000;
   const instanceId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+  const stopButtonSelector = [
+    '[data-testid="stop-button"]',
+    'button[data-testid*="stop" i]',
+    'button[aria-label*="Stop generating" i]',
+    'button[aria-label*="Stop streaming" i]',
+    'button[aria-label="Stop" i]'
+  ].join(", ");
 
   let currentChatId = getConversationId();
   let goal = { enabled: false, text: "" };
@@ -17,6 +24,8 @@
   let candidateStableSince = 0;
   let lastPromptedAssistantKey = "";
   let loadedGoalKey = "";
+  let wasGenerating = false;
+  let manualStopPending = false;
 
   // Disable the v2.0.0 legacy global Goal Mode. Chat-specific Goal Mode below
   // is the only continuation engine from v2.0.1 onward.
@@ -41,6 +50,8 @@
     candidateSignature = "";
     candidateStableSince = 0;
     lastPromptedAssistantKey = "";
+    wasGenerating = false;
+    manualStopPending = false;
   }
 
   async function loadGoalForCurrentChat() {
@@ -81,11 +92,31 @@
     );
   }
 
+  function getAssistantTurns() {
+    const turns = getTurns();
+    const roleMatched = turns.filter((turn) => getTurnRole(turn) === "assistant");
+    if (roleMatched.length > 0) return roleMatched;
+
+    // Interrupted responses can briefly expose a different wrapper shape. Fall back
+    // to locating assistant-role nodes and walking back to their conversation turn.
+    const seen = new Set();
+    const recovered = [];
+    for (const node of document.querySelectorAll('[data-message-author-role="assistant"]')) {
+      const turn = node.closest('[data-testid^="conversation-turn-"]') || node;
+      if (!seen.has(turn)) {
+        seen.add(turn);
+        recovered.push(turn);
+      }
+    }
+    return recovered;
+  }
+
   function getTurnKey(turn, index = 0) {
     if (!turn) return "";
     return (
       turn.getAttribute("data-testid") ||
       turn.getAttribute("data-message-id") ||
+      turn.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
       `${index}:${(turn.innerText || turn.textContent || "").slice(0, 120)}`
     );
   }
@@ -95,12 +126,22 @@
     return `${text.length}:${text.slice(-160)}`;
   }
 
+  function findStopButton() {
+    return document.querySelector(stopButtonSelector);
+  }
+
   function isGenerating() {
-    return Boolean(
-      document.querySelector(
-        '[data-testid="stop-button"], button[aria-label*="Stop generating" i], button[aria-label*="Stop streaming" i]'
-      )
-    );
+    return Boolean(findStopButton());
+  }
+
+  function noteManualStop() {
+    if (!goal.enabled || !goal.text.trim() || !getConversationId()) return;
+    manualStopPending = true;
+    wasGenerating = true;
+    candidateKey = "";
+    candidateSignature = "";
+    candidateStableSince = 0;
+    console.info("[ChatGPT Optimizer] Manual stop detected; Goal Mode will continue after the partial reply stabilizes.");
   }
 
   function findComposer() {
@@ -190,7 +231,7 @@
     return `Continue working autonomously toward this goal:\n\n${goal.text.trim()}\n\nTake concrete steps now instead of giving only a status update or plan. Keep making progress until the goal is actually complete or you hit a real blocker. If the goal is fully complete, put ${GOAL_COMPLETE_MARKER} on its own final line. If you cannot continue without new information, access, or a user decision, put ${GOAL_BLOCKED_MARKER} on its own final line.`;
   }
 
-  async function waitForSendButton(timeoutMs = 2500) {
+  async function waitForSendButton(timeoutMs = 3500) {
     const started = Date.now();
 
     while (Date.now() - started < timeoutMs) {
@@ -306,12 +347,23 @@
       return;
     }
 
-    if (isGenerating()) {
+    const generating = isGenerating();
+    if (generating) {
+      wasGenerating = true;
       candidateStableSince = 0;
       return;
     }
 
-    const assistantTurns = getTurns().filter((turn) => getTurnRole(turn) === "assistant");
+    // Treat the transition from generating -> stopped as an explicit continuation
+    // trigger. This includes clicking ChatGPT's Stop button and normal completion.
+    if (wasGenerating) {
+      wasGenerating = false;
+      candidateKey = "";
+      candidateSignature = "";
+      candidateStableSince = Date.now();
+    }
+
+    const assistantTurns = getAssistantTurns();
     const latestAssistant = assistantTurns.at(-1);
     if (!latestAssistant) return;
 
@@ -342,15 +394,42 @@
     if (await sendGoalPrompt()) {
       lastPromptedAssistantKey = key;
       candidateStableSince = 0;
+      manualStopPending = false;
     }
   }
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const button = target?.closest("button");
+      if (!button) return;
+
+      const label = `${button.getAttribute("aria-label") || ""} ${button.getAttribute("data-testid") || ""} ${button.textContent || ""}`.toLowerCase();
+      if (button.matches(stopButtonSelector) || (isGenerating() && label.includes("stop"))) {
+        noteManualStop();
+      }
+    },
+    true
+  );
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key === "Escape" && isGenerating()) noteManualStop();
+    },
+    true
+  );
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== "CGO_GET_CHAT_CONTEXT") return false;
     sendResponse({
       chatId: getConversationId(),
       pathname: location.pathname,
-      title: document.title
+      title: document.title,
+      goalEnabled: goal.enabled,
+      generating: isGenerating(),
+      manualStopPending
     });
     return false;
   });
@@ -374,5 +453,5 @@
       return;
     }
     void maybeAdvanceGoal();
-  }, 750);
+  }, 500);
 })();
