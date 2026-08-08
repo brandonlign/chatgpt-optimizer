@@ -96,6 +96,13 @@
         accent-color: #67c38c;
       }
 
+      .scope {
+        margin-top: 6px;
+        color: #9ad6b4;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
       textarea {
         width: 100%;
         min-height: 86px;
@@ -112,6 +119,11 @@
 
       textarea:focus {
         border-color: rgba(103, 195, 140, 0.7);
+      }
+
+      textarea:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
       }
 
       textarea::placeholder { color: #777; }
@@ -155,8 +167,9 @@
         <h2 class="section-title">/goal mode</h2>
         <label class="goal-enable"><span>Enable</span><input id="goalEnabled" type="checkbox" /></label>
       </div>
-      <textarea id="goalText" placeholder="Enter the goal ChatGPT should keep working toward..."></textarea>
-      <p id="goalHint" class="note">When enabled, ChatGPT is prompted again after each completed reply.</p>
+      <div id="goalScope" class="scope"></div>
+      <textarea id="goalText" placeholder="Enter the goal for this ChatGPT conversation..."></textarea>
+      <p id="goalHint" class="note">Goals are stored separately for each ChatGPT conversation.</p>
     </section>
 
     <script src="popup.js"></script>
