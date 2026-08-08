@@ -24,6 +24,7 @@ const goalScope = document.getElementById("goalScope");
 let activeChatId = "";
 let activeGoalKey = "";
 let goalSaveTimer = null;
+let contentScriptReady = false;
 
 function showGoalHint(message, isError = false) {
   goalHint.textContent = message;
@@ -35,11 +36,40 @@ function setGoalControlsAvailable(available) {
   goalEnabled.disabled = !available;
 }
 
+function extractChatIdFromUrl(rawUrl) {
+  if (!rawUrl) return "";
+
+  try {
+    const url = new URL(rawUrl);
+    if (url.hostname !== "chatgpt.com" && url.hostname !== "chat.openai.com") return "";
+    const match = url.pathname.match(/\/c\/([^/?#]+)/);
+    return match?.[1] || "";
+  } catch {
+    return "";
+  }
+}
+
 async function getActiveChatContext() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return null;
-    return await chrome.tabs.sendMessage(tab.id, { type: "CGO_GET_CHAT_CONTEXT" });
+
+    let chatId = extractChatIdFromUrl(tab.url || "");
+    let response = null;
+
+    try {
+      response = await chrome.tabs.sendMessage(tab.id, { type: "CGO_GET_CHAT_CONTEXT" });
+    } catch {
+      // An already-open ChatGPT tab may not have the newest content script until refreshed.
+    }
+
+    if (!chatId) chatId = response?.chatId || "";
+
+    return {
+      chatId,
+      contentScriptReady: Boolean(response),
+      url: tab.url || ""
+    };
   } catch {
     return null;
   }
@@ -69,6 +99,24 @@ async function writeCurrentGoal(patch) {
   });
 }
 
+function showCurrentGoalStatus(enabled) {
+  if (!contentScriptReady) {
+    showGoalHint(
+      enabled
+        ? "Goal saved for this chat. Refresh this ChatGPT tab once to activate automatic continuation."
+        : "You can set this chat's goal now. Refresh the ChatGPT tab once before enabling automation.",
+      true
+    );
+    return;
+  }
+
+  showGoalHint(
+    enabled
+      ? "Active for this chat only. Other ChatGPT conversations will not use this goal."
+      : "Set a goal for this chat, then enable it."
+  );
+}
+
 async function initialize() {
   const stored = await chrome.storage.sync.get(defaultSettings);
   for (const input of settingInputs) {
@@ -78,13 +126,14 @@ async function initialize() {
   const context = await getActiveChatContext();
   activeChatId = context?.chatId || "";
   activeGoalKey = activeChatId ? `${GOAL_KEY_PREFIX}${activeChatId}` : "";
+  contentScriptReady = Boolean(context?.contentScriptReady);
 
   if (!activeChatId) {
     goalText.value = "";
     goalEnabled.checked = false;
     setGoalControlsAvailable(false);
     goalScope.textContent = "No saved conversation detected";
-    showGoalHint("Open a specific ChatGPT conversation first, then set its goal here.", true);
+    showGoalHint("Open a saved ChatGPT conversation with /c/ in its URL, then set its goal here.", true);
     return;
   }
 
@@ -93,11 +142,7 @@ async function initialize() {
   const currentGoal = await readCurrentGoal();
   goalText.value = currentGoal.text;
   goalEnabled.checked = currentGoal.enabled;
-  showGoalHint(
-    currentGoal.enabled
-      ? "Active for this chat only. Other ChatGPT conversations will not use this goal."
-      : "Set a goal for this chat, then enable it."
-  );
+  showCurrentGoalStatus(currentGoal.enabled);
 }
 
 for (const input of settingInputs) {
@@ -125,11 +170,7 @@ goalEnabled.addEventListener("change", async () => {
   }
 
   await writeCurrentGoal({ text, enabled: goalEnabled.checked });
-  showGoalHint(
-    goalEnabled.checked
-      ? "Active for this chat only. Other ChatGPT conversations will not use this goal."
-      : "Goal saved for this chat but automatic continuation is off."
-  );
+  showCurrentGoalStatus(goalEnabled.checked);
 });
 
 void initialize();
