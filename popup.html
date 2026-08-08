@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ChatGPT Optimizer</title>
     <style>
+      * { box-sizing: border-box; }
+
       body {
-        width: 290px;
+        width: 360px;
         margin: 0;
         padding: 16px;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -32,21 +34,96 @@
         font-weight: 700;
       }
 
-      .status {
-        margin: 14px 0 8px;
-        padding: 10px;
+      .section {
+        margin-top: 14px;
+        padding: 12px;
         border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 9px;
-        background: rgba(255, 255, 255, 0.05);
-        font-size: 13px;
-        font-weight: 650;
+        border-radius: 11px;
+        background: rgba(255, 255, 255, 0.04);
       }
 
-      .note {
-        color: #aaa;
-        font-size: 12px;
-        line-height: 1.45;
+      .section-title {
+        margin: 0 0 9px;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 750;
       }
+
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 31px;
+        color: #ddd;
+        font-size: 12.5px;
+        cursor: pointer;
+      }
+
+      .toggle-row + .toggle-row {
+        border-top: 1px solid rgba(255, 255, 255, 0.07);
+      }
+
+      .toggle-row input {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+        accent-color: #67c38c;
+      }
+
+      .goal-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .goal-head .section-title { margin: 0; }
+
+      .goal-enable {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: #ddd;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .goal-enable input {
+        width: 16px;
+        height: 16px;
+        accent-color: #67c38c;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 86px;
+        margin-top: 10px;
+        resize: vertical;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 8px;
+        padding: 9px 10px;
+        outline: none;
+        background: #181818;
+        color: #f5f5f5;
+        font: 12.5px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      textarea:focus {
+        border-color: rgba(103, 195, 140, 0.7);
+      }
+
+      textarea::placeholder { color: #777; }
+
+      .note {
+        margin: 8px 0 0;
+        color: #999;
+        font-size: 11.5px;
+        line-height: 1.4;
+      }
+
+      .note.error { color: #ff9c9c; }
     </style>
   </head>
   <body>
@@ -55,10 +132,32 @@
       <span id="version"></span>
     </div>
 
-    <div class="status">Max-performance long-chat mode</div>
-    <div class="note">
-      Only the newest 10 turns remain visible. Long chats automatically jump to the latest message, while blur, shadows, and most animations are reduced.
-    </div>
+    <section class="section">
+      <h2 class="section-title">Long-chat performance</h2>
+      <label class="toggle-row"><span>Hide turns during initial load</span><input type="checkbox" data-setting="hideDuringLoad" /></label>
+      <label class="toggle-row"><span>Keep only newest 10 turns visible</span><input type="checkbox" data-setting="limitVisibleTurns" /></label>
+      <label class="toggle-row"><span>Jump to the newest turn</span><input type="checkbox" data-setting="autoScroll" /></label>
+      <label class="toggle-row"><span>Pause media in hidden turns</span><input type="checkbox" data-setting="pauseHiddenMedia" /></label>
+      <label class="toggle-row"><span>Lazy-load visible images</span><input type="checkbox" data-setting="lazyImages" /></label>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Visual performance</h2>
+      <label class="toggle-row"><span>Disable smooth scrolling</span><input type="checkbox" data-setting="disableSmoothScroll" /></label>
+      <label class="toggle-row"><span>Remove backdrop blur</span><input type="checkbox" data-setting="disableBackdropBlur" /></label>
+      <label class="toggle-row"><span>Remove shadows</span><input type="checkbox" data-setting="disableShadows" /></label>
+      <label class="toggle-row"><span>Disable transitions</span><input type="checkbox" data-setting="disableTransitions" /></label>
+      <label class="toggle-row"><span>Disable animations</span><input type="checkbox" data-setting="disableAnimations" /></label>
+    </section>
+
+    <section class="section">
+      <div class="goal-head">
+        <h2 class="section-title">/goal mode</h2>
+        <label class="goal-enable"><span>Enable</span><input id="goalEnabled" type="checkbox" /></label>
+      </div>
+      <textarea id="goalText" placeholder="Enter the goal ChatGPT should keep working toward..."></textarea>
+      <p id="goalHint" class="note">When enabled, ChatGPT is prompted again after each completed reply.</p>
+    </section>
 
     <script src="popup.js"></script>
   </body>
