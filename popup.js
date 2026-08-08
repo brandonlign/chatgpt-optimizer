@@ -8,11 +8,10 @@ const defaultSettings = {
   disableBackdropBlur: true,
   disableShadows: true,
   disableTransitions: true,
-  disableAnimations: true,
-  goalEnabled: false,
-  goalText: ""
+  disableAnimations: true
 };
 
+const GOAL_KEY_PREFIX = "cgoGoal:";
 const version = chrome.runtime.getManifest().version;
 document.getElementById("version").textContent = `v${version}`;
 
@@ -20,6 +19,10 @@ const settingInputs = Array.from(document.querySelectorAll("[data-setting]"));
 const goalText = document.getElementById("goalText");
 const goalEnabled = document.getElementById("goalEnabled");
 const goalHint = document.getElementById("goalHint");
+const goalScope = document.getElementById("goalScope");
+
+let activeChatId = "";
+let activeGoalKey = "";
 let goalSaveTimer = null;
 
 function showGoalHint(message, isError = false) {
@@ -27,19 +30,75 @@ function showGoalHint(message, isError = false) {
   goalHint.classList.toggle("error", isError);
 }
 
-chrome.storage.sync.get(defaultSettings, (stored) => {
+function setGoalControlsAvailable(available) {
+  goalText.disabled = !available;
+  goalEnabled.disabled = !available;
+}
+
+async function getActiveChatContext() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) return null;
+    return await chrome.tabs.sendMessage(tab.id, { type: "CGO_GET_CHAT_CONTEXT" });
+  } catch {
+    return null;
+  }
+}
+
+async function readCurrentGoal() {
+  if (!activeGoalKey) return { enabled: false, text: "" };
+  const stored = await chrome.storage.local.get(activeGoalKey);
+  const value = stored[activeGoalKey] || {};
+  return {
+    enabled: Boolean(value.enabled),
+    text: typeof value.text === "string" ? value.text : ""
+  };
+}
+
+async function writeCurrentGoal(patch) {
+  if (!activeGoalKey) return;
+  const stored = await chrome.storage.local.get(activeGoalKey);
+  const current = stored[activeGoalKey] || {};
+  await chrome.storage.local.set({
+    [activeGoalKey]: {
+      ...current,
+      ...patch,
+      chatId: activeChatId,
+      updatedAt: Date.now()
+    }
+  });
+}
+
+async function initialize() {
+  const stored = await chrome.storage.sync.get(defaultSettings);
   for (const input of settingInputs) {
     input.checked = Boolean(stored[input.dataset.setting]);
   }
 
-  goalText.value = stored.goalText || "";
-  goalEnabled.checked = Boolean(stored.goalEnabled);
+  const context = await getActiveChatContext();
+  activeChatId = context?.chatId || "";
+  activeGoalKey = activeChatId ? `${GOAL_KEY_PREFIX}${activeChatId}` : "";
+
+  if (!activeChatId) {
+    goalText.value = "";
+    goalEnabled.checked = false;
+    setGoalControlsAvailable(false);
+    goalScope.textContent = "No saved conversation detected";
+    showGoalHint("Open a specific ChatGPT conversation first, then set its goal here.", true);
+    return;
+  }
+
+  setGoalControlsAvailable(true);
+  goalScope.textContent = `This chat only · ${activeChatId.slice(0, 8)}…`;
+  const currentGoal = await readCurrentGoal();
+  goalText.value = currentGoal.text;
+  goalEnabled.checked = currentGoal.enabled;
   showGoalHint(
-    goalEnabled.checked
-      ? "Goal Mode is active. It will keep continuing this goal after completed replies."
-      : "When enabled, ChatGPT is prompted again after each completed reply."
+    currentGoal.enabled
+      ? "Active for this chat only. Other ChatGPT conversations will not use this goal."
+      : "Set a goal for this chat, then enable it."
   );
-});
+}
 
 for (const input of settingInputs) {
   input.addEventListener("change", () => {
@@ -50,25 +109,27 @@ for (const input of settingInputs) {
 goalText.addEventListener("input", () => {
   clearTimeout(goalSaveTimer);
   goalSaveTimer = setTimeout(() => {
-    chrome.storage.sync.set({ goalText: goalText.value.trim() });
+    void writeCurrentGoal({ text: goalText.value.trim() });
   }, 250);
 });
 
-goalEnabled.addEventListener("change", () => {
+goalEnabled.addEventListener("change", async () => {
   const text = goalText.value.trim();
 
   if (goalEnabled.checked && !text) {
     goalEnabled.checked = false;
-    chrome.storage.sync.set({ goalEnabled: false });
+    await writeCurrentGoal({ enabled: false, text: "" });
     showGoalHint("Enter a goal before enabling Goal Mode.", true);
     goalText.focus();
     return;
   }
 
-  chrome.storage.sync.set({ goalText: text, goalEnabled: goalEnabled.checked });
+  await writeCurrentGoal({ text, enabled: goalEnabled.checked });
   showGoalHint(
     goalEnabled.checked
-      ? "Goal Mode is active. It will auto-stop if ChatGPT marks the goal complete or blocked."
-      : "When enabled, ChatGPT is prompted again after each completed reply."
+      ? "Active for this chat only. Other ChatGPT conversations will not use this goal."
+      : "Goal saved for this chat but automatic continuation is off."
   );
 });
+
+void initialize();
