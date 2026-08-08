@@ -25,6 +25,7 @@ let activeChatId = "";
 let activeGoalKey = "";
 let goalSaveTimer = null;
 let contentScriptReady = false;
+let lastContext = null;
 
 function showGoalHint(message, isError = false) {
   goalHint.textContent = message;
@@ -42,8 +43,7 @@ function extractChatIdFromUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);
     if (url.hostname !== "chatgpt.com" && url.hostname !== "chat.openai.com") return "";
-    const match = url.pathname.match(/\/c\/([^/?#]+)/);
-    return match?.[1] || "";
+    return url.pathname.match(/\/c\/([^/?#]+)/)?.[1] || "";
   } catch {
     return "";
   }
@@ -60,15 +60,15 @@ async function getActiveChatContext() {
     try {
       response = await chrome.tabs.sendMessage(tab.id, { type: "CGO_GET_CHAT_CONTEXT" });
     } catch {
-      // An already-open ChatGPT tab may not have the newest content script until refreshed.
+      // Existing tabs need one refresh after an extension reload.
     }
 
     if (!chatId) chatId = response?.chatId || "";
-
     return {
       chatId,
       contentScriptReady: Boolean(response),
-      url: tab.url || ""
+      url: tab.url || "",
+      ...(response || {})
     };
   } catch {
     return null;
@@ -103,18 +103,32 @@ function showCurrentGoalStatus(enabled) {
   if (!contentScriptReady) {
     showGoalHint(
       enabled
-        ? "Goal saved for this chat. Refresh this ChatGPT tab once to activate automatic continuation."
-        : "You can set this chat's goal now. Refresh the ChatGPT tab once before enabling automation.",
+        ? "Goal saved. Refresh this ChatGPT tab once to load the Goal engine."
+        : "You can set this chat's goal now. Refresh the ChatGPT tab once before running it.",
       true
     );
     return;
   }
 
+  if (enabled && lastContext?.debugState) {
+    showGoalHint(`Engine: ${lastContext.debugState}`);
+    return;
+  }
+
   showGoalHint(
     enabled
-      ? "Active for this chat only. Other ChatGPT conversations will not use this goal."
+      ? "Active for this chat only."
       : "Set a goal for this chat, then enable it."
   );
+}
+
+async function refreshEngineStatus() {
+  if (!activeChatId) return;
+  const context = await getActiveChatContext();
+  if (!context || context.chatId !== activeChatId) return;
+  lastContext = context;
+  contentScriptReady = Boolean(context.contentScriptReady);
+  showCurrentGoalStatus(goalEnabled.checked);
 }
 
 async function initialize() {
@@ -124,6 +138,7 @@ async function initialize() {
   }
 
   const context = await getActiveChatContext();
+  lastContext = context;
   activeChatId = context?.chatId || "";
   activeGoalKey = activeChatId ? `${GOAL_KEY_PREFIX}${activeChatId}` : "";
   contentScriptReady = Boolean(context?.contentScriptReady);
@@ -143,6 +158,8 @@ async function initialize() {
   goalText.value = currentGoal.text;
   goalEnabled.checked = currentGoal.enabled;
   showCurrentGoalStatus(currentGoal.enabled);
+
+  setInterval(() => void refreshEngineStatus(), 700);
 }
 
 for (const input of settingInputs) {
@@ -170,6 +187,7 @@ goalEnabled.addEventListener("change", async () => {
   }
 
   await writeCurrentGoal({ text, enabled: goalEnabled.checked });
+  await refreshEngineStatus();
   showCurrentGoalStatus(goalEnabled.checked);
 });
 
